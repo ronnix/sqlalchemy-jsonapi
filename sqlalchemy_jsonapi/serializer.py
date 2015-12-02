@@ -210,13 +210,14 @@ def get_rel_desc(instance, key, action):
 class JSONAPI(object):
     """ JSON API Serializer for SQLAlchemy ORM models. """
 
-    def __init__(self, base):
+    def __init__(self, base, commit_session=True):
         """
         Initialize the serializer.
 
         :param base: Declarative base instance
         """
         self.base = base
+        self.commit_session = commit_session
         self.models = {}
         for name, model in base._decl_class_registry.items():
             if name.startswith('_'):
@@ -549,7 +550,7 @@ class JSONAPI(object):
 
             remove(resource, item)
 
-        session.commit()
+        self.commit_or_flush(session)
         session.refresh(resource)
 
         get = get_rel_desc(resource, relationship.key, RelationshipActions.GET)
@@ -573,7 +574,7 @@ class JSONAPI(object):
         self._check_instance_relationships_for_delete(resource)
 
         session.delete(resource)
-        session.commit()
+        self.commit_or_flush(session)
 
         response = JSONAPIResponse()
         response.status_code = 204
@@ -815,7 +816,7 @@ class JSONAPI(object):
                         check_permission(to_relate, remote_side,
                                          Permissions.CREATE)
                     appender(resource, to_relate)
-            session.commit()
+            self.commit_or_flush(session)
         except KeyError:
             raise ValidationError('Incompatible Type')
 
@@ -885,7 +886,7 @@ class JSONAPI(object):
             for key in data_keys & model_keys:
                 setter = get_attr_desc(resource, key, AttributeActions.SET)
                 setter(resource, json_data['data']['attributes'][key])
-            session.commit()
+            self.commit_or_flush(session)
         except IntegrityError as e:
             session.rollback()
             raise ValidationError(str(e.orig))
@@ -1017,7 +1018,7 @@ class JSONAPI(object):
                     setter(resource, data['data']['attributes'][key])
 
             session.add(resource)
-            session.commit()
+            self.commit_or_flush(session)
         except IntegrityError as e:
             session.rollback()
             raise ValidationError(str(e.orig))
@@ -1087,10 +1088,16 @@ class JSONAPI(object):
                     setter(resource, to_relate)
 
             session.add(resource)
-            session.commit()
+            self.commit_or_flush(session)
 
         except KeyError:
             raise ValidationError('Incompatible type provided')
 
         return self.get_relationship(
             session, {}, model.__jsonapi_type__, resource.id, relationship.key)
+
+    def commit_or_flush(self, session):
+        if self.commit_session:
+            session.commit()
+        else:
+            session.flush()
